@@ -1,36 +1,43 @@
-ARG NODE_VERSION=18
+# Stage 1: Build
+ARG NODE_VERSION=22
 FROM node:${NODE_VERSION}-alpine AS builder
 
-# Set working directory
-WORKDIR /usr/src/app
+WORKDIR /app
 
-# Copy package files
+# Only copy package files first to leverage Docker cache
 COPY package.json package-lock.json ./
-
-# Install dependencies
 RUN npm ci
 
-# Copy source files
+# Copy the rest of the source files
 COPY . .
 
-# Build the application
+# Build the app
 RUN npm run build
 
-# Production stage
+# Stage 2: Production image
 FROM node:${NODE_VERSION}-alpine AS production
 
-WORKDIR /usr/src/app
+WORKDIR /app
 
-# Copy built assets from builder stage
-COPY --from=builder /usr/src/app/package.json ./
-COPY --from=builder /usr/src/app/package-lock.json ./
-COPY --from=builder /usr/src/app/next.config.ts ./
-COPY --from=builder /usr/src/app/public ./public
-COPY --from=builder /usr/src/app/.next ./.next
-COPY --from=builder /usr/src/app/node_modules ./node_modules
+# Install Chrome dependencies for Alpine
+RUN apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont \
+    font-noto-emoji
 
-# Expose port
-EXPOSE 3000
+# Set environment variable to tell Puppeteer to use the installed Chromium
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
-# Start production server
-CMD ["npm", "start"]
+# Copy only necessary files from the builder
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+
+EXPOSE 5000
+
+CMD ["node", "dist/index.js"]
